@@ -8,21 +8,103 @@ using System.Windows.Forms;
 
 namespace ImageCropper
 {
-    
-    static class Utility
+
+    class PreviewImageChangedArgs : EventArgs
     {
-        
+        public Image PreviewImage { get; private set; }
+
+        public PreviewImageChangedArgs(Image img)
+        {
+            PreviewImage = img;
+        }
     }
-    
+
     class ImageCropperBox : PictureBox
     {
         CropArea cropArea = new CropArea(10, 10, 100, 100);
         private bool isDragging = false;
         Dragger currentDragger = null;
+        
 
         int orgX; int orgY;
 
-        
+        public new Image Image
+        {
+            get
+            {
+                return base.Image;
+            }
+            set
+            {
+                base.Image = value;
+                // find ratio
+            }
+        }
+
+        public event EventHandler<PreviewImageChangedArgs> PreviewImageChanged;
+
+        private Point ToImageCoordinate(Point p)
+        {
+            // source: https://stackoverflow.com/questions/10473582/how-to-retrieve-zoom-factor-of-a-winforms-picturebox           
+            
+            Point unscaled_p = new Point();
+
+            // image and container dimensions
+            int w_i = Image.Width;
+            int h_i = Image.Height;
+            int w_c = Width;
+            int h_c = Height;
+
+            float imageRatio = w_i / (float)h_i; // image W:H ratio
+            float containerRatio = w_c / (float)h_c; // container W:H ratio
+
+            if (imageRatio >= containerRatio)
+            {
+                // horizontal image
+                float scaleFactor = w_c / (float)w_i;
+                float scaledHeight = h_i * scaleFactor;
+                // calculate gap between top of container and top of image
+                float filler = Math.Abs(h_c - scaledHeight) / 2;
+                unscaled_p.X = (int)(p.X / scaleFactor);
+                unscaled_p.Y = (int)((p.Y - filler) / scaleFactor);
+            }
+            else
+            {
+                // vertical image
+                float scaleFactor = h_c / (float)h_i;
+                float scaledWidth = w_i * scaleFactor;
+                float filler = Math.Abs(w_c - scaledWidth) / 2;
+                unscaled_p.X = (int)((p.X - filler) / scaleFactor);
+                unscaled_p.Y = (int)(p.Y / scaleFactor);
+            }
+
+            return unscaled_p;
+        }
+
+        void UpdateCroppedPreview()
+        {
+            
+            if(Image != null)
+            {
+
+                Point topLeft = ToImageCoordinate(new Point(cropArea.X, cropArea.Y));
+                Point bottomRight = ToImageCoordinate(new Point(cropArea.X + cropArea.Width, cropArea.Y + cropArea.Height));
+
+                int width = bottomRight.X - topLeft.X;
+                int height = bottomRight.Y - topLeft.Y;
+
+                Bitmap result = new Bitmap(width, height);
+
+                using (Graphics g = Graphics.FromImage(result))
+                {
+                    g.DrawImage(Image, new Rectangle(0, 0, width, height), new Rectangle(topLeft.X, topLeft.Y, width, height), GraphicsUnit.Pixel);
+                }
+
+                PreviewImageChanged?.Invoke(this, new PreviewImageChangedArgs(result));
+            }            
+        }
+
+
         public ImageCropperBox()
         {
 
@@ -59,7 +141,7 @@ namespace ImageCropper
                 isDragging = true;
                 orgX = e.X; orgY = e.Y;
             }
-            
+
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -67,56 +149,32 @@ namespace ImageCropper
             base.OnMouseMove(e);
 
 
-            
+
             // check if is dragging
 
-             if(currentDragger != null) // check if is we're resizing right now
+            if (currentDragger != null) // check if is we're resizing right now
             {
                 int dx = e.X - orgX;
                 int dy = e.Y - orgY;
 
-                switch (currentDragger.Location)
-                {
-                    case DraggerLocation.TOP_LEFT:
-                        cropArea.X += dx;
-                        cropArea.Y += dy;
-
-                        cropArea.Width -= dx;
-                        cropArea.Height -= dy;
-                        
-                        break;
-                    case DraggerLocation.TOP_RIGHT:
-                        cropArea.Width += dx;
-                        cropArea.Y += dy;
-                         
-                        cropArea.Height -= dy;
-                        break;
-                    case DraggerLocation.BOTTOM_LEFT:
-                        cropArea.X += dx;
-                        cropArea.Height += dy;                        
-                        
-                        cropArea.Width -= dx;
-
-                        break;
-                    case DraggerLocation.BOTTOM_RIGHT:
-                        cropArea.Width += dx;
-                        cropArea.Height += dy;
-                        break;
-                }
+                cropArea.DragResize(currentDragger, dx, dy);
+                UpdateCroppedPreview();
 
                 orgX = e.X; orgY = e.Y;
-            }else if (isDragging)
+            }
+            else if (isDragging)
             {
                 cropArea.X += e.X - orgX;
                 cropArea.Y += e.Y - orgY;
-                orgX = e.X; orgY = e.Y;               
+                UpdateCroppedPreview();
+                orgX = e.X; orgY = e.Y;
             }
-            
 
 
-           // check if mouse is in the crop area
 
-           if (cropArea.IsMouseHovering(e.X, e.Y))
+            // check if mouse is in the crop area
+
+            if (cropArea.IsMouseHovering(e.X, e.Y))
             {
                 Cursor.Current = Cursors.Hand;
                 cropArea.Hover = true;
@@ -125,28 +183,34 @@ namespace ImageCropper
             {
                 cropArea.Hover = false;
             }
-            
+
             // check if the mouse is hovering on dragger
             foreach (Dragger dragger in cropArea.Draggers)
             {
                 int half = dragger.Size / 2;
-                if (dragger.IsMouseHovering(e.X, e.Y)){
+                if (dragger.IsMouseHovering(e.X, e.Y))
+                {
                     dragger.Hover = true;
                 }
                 else
                 {
                     dragger.Hover = false;
-                }                    
+                }
             }
-
             Invalidate();
+            
         }
+
+        
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
-            isDragging = false;
-            currentDragger = null;
+            if(isDragging || currentDragger != null) { 
+                isDragging = false;
+                currentDragger = null;
+                UpdateCroppedPreview();
+            }
         }
     }
 
@@ -224,6 +288,7 @@ namespace ImageCropper
             return mouseX >= X - half && mouseX <= (X - half + Size) && mouseY >= Y - half && mouseY <= (Y - half + Size);
         }
 
+
         public void Draw(Graphics g)
         {
             int half = Size / 2;
@@ -243,6 +308,9 @@ namespace ImageCropper
         public int Y { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
+
+        public int MinimumWidth { get; set; } = 30;
+        public int MinimumHeight { get; set; } = 30;
         public bool Hover { get; set; }
 
         public Color BorderColor { get; set; } = Color.FromArgb(255, 0, 0);
@@ -261,12 +329,15 @@ namespace ImageCropper
 
 
         private List<Dragger> draggers = new List<Dragger>();
+        private float aspectRatio;
 
-        public CropArea(int x, int y, int width, int height)
+        public CropArea(int x, int y, int width, int height, float ratio = -1)
         {
             // initialize values
-            X = x; Y = y; Width =
-            width; Height = height; Hover = false;
+            X = x; Y = y;
+            Width = width; Height = height;
+            Hover = false;
+            aspectRatio = ratio;
 
             // assign draggers
             draggers.Add(new Dragger(this, DraggerLocation.TOP_LEFT));
@@ -280,6 +351,71 @@ namespace ImageCropper
         {
             return mouseX >= X && mouseX <= (X + Width) && mouseY >= Y && mouseY <= (Y + Width);
         }
+
+        public void DragResize(Dragger dragger, int dx, int dy)
+        {
+            switch (dragger.Location)
+            {
+                case DraggerLocation.TOP_LEFT:
+
+                    if ((Width - dx) >= MinimumWidth)
+                    {
+                        X += dx; // intent
+                        Width -= dx; // compensate
+                    }
+
+                    if ((Height - dy) >= MinimumHeight)
+                    {
+                        Y += dy; // intent
+                        Height -= dy; // compensate
+                    }
+
+                    break;
+                case DraggerLocation.TOP_RIGHT:
+
+                    if ((Width + dx) >= MinimumWidth)
+                    {
+                        Width += dx; // intent
+                    }
+
+                    if ((Height - dy) >= MinimumHeight)
+                    {
+                        Y += dy; // intent
+                        Height -= dy; // compensate
+                    }
+
+
+                    break;
+                case DraggerLocation.BOTTOM_LEFT:
+
+                    if ((Width - dx) >= MinimumWidth)
+                    {
+                        X += dx; // intent
+                        Width -= dx; // compensate
+                    }
+
+                    if ((Height + dy) >= MinimumHeight)
+                    {
+                        Height += dy; // intent
+                    }
+
+
+                    break;
+                case DraggerLocation.BOTTOM_RIGHT:
+
+
+                    if ((Width + dx) >= MinimumWidth)
+                    {
+                        Width += dx; // intent
+                    }
+                    if ((Height + dy) >= MinimumHeight)
+                    {
+                        Height += dy; // intent
+                    }
+                    break;
+            }
+        }
+
         public void Draw(Graphics g)
         {
             // draw bonding box

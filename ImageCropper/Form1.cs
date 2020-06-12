@@ -26,5 +26,15 @@ namespace ImageCropper
                 imageCropperBox1.Image = new Bitmap(ofd.FileName);
             }
         }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            imageCropperBox1.PreviewImageChanged += ImageCropperBox1_PreviewImageChanged;
+        }
+
+        private void ImageCropperBox1_PreviewImageChanged(object sender, PreviewImageChangedArgs e)
+        {
+            pbPreview.Image = e.PreviewImage;
+        }
     }
 }
