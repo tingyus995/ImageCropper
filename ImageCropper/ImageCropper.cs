@@ -21,12 +21,20 @@ namespace ImageCropper
 
     class ImageCropperBox : PictureBox
     {
-        CropArea cropArea = new CropArea(10, 10, 100, 100);
+        CropArea cropArea = new CropArea(10, 10, 100, 100, 16 / 9f);
         private bool isDragging = false;
         Dragger currentDragger = null;
-        
+
 
         int orgX; int orgY;
+
+
+
+        private float scaleFactor;
+        private float filler;
+        private bool isHorizontal = false;
+
+
 
         public new Image Image
         {
@@ -37,7 +45,35 @@ namespace ImageCropper
             set
             {
                 base.Image = value;
-                // find ratio
+
+                // image and container dimensions
+                int w_i = Image.Width;
+                int h_i = Image.Height;
+                int w_c = Width;
+                int h_c = Height;
+
+                float imageRatio = w_i / (float)h_i; // image W:H ratio
+                float containerRatio = w_c / (float)h_c; // container W:H ratio
+
+                if (imageRatio >= containerRatio)
+                {
+                    // horizontal image
+                    scaleFactor = w_c / (float)w_i;
+                    float scaledHeight = h_i * scaleFactor;
+                    // calculate gap between top of container and top of image
+                    filler = Math.Abs(h_c - scaledHeight) / 2;
+                    isHorizontal = true;
+
+                }
+                else
+                {
+                    // vertical image
+                    scaleFactor = h_c / (float)h_i;
+                    float scaledWidth = w_i * scaleFactor;
+                    filler = Math.Abs(w_c - scaledWidth) / 2;
+
+                    isHorizontal = false;
+                }
             }
         }
 
@@ -46,34 +82,21 @@ namespace ImageCropper
         private Point ToImageCoordinate(Point p)
         {
             // source: https://stackoverflow.com/questions/10473582/how-to-retrieve-zoom-factor-of-a-winforms-picturebox           
-            
+
             Point unscaled_p = new Point();
 
-            // image and container dimensions
-            int w_i = Image.Width;
-            int h_i = Image.Height;
-            int w_c = Width;
-            int h_c = Height;
 
-            float imageRatio = w_i / (float)h_i; // image W:H ratio
-            float containerRatio = w_c / (float)h_c; // container W:H ratio
 
-            if (imageRatio >= containerRatio)
+
+            if (isHorizontal)
             {
-                // horizontal image
-                float scaleFactor = w_c / (float)w_i;
-                float scaledHeight = h_i * scaleFactor;
-                // calculate gap between top of container and top of image
-                float filler = Math.Abs(h_c - scaledHeight) / 2;
+                // horizontal image                
                 unscaled_p.X = (int)(p.X / scaleFactor);
                 unscaled_p.Y = (int)((p.Y - filler) / scaleFactor);
             }
             else
             {
-                // vertical image
-                float scaleFactor = h_c / (float)h_i;
-                float scaledWidth = w_i * scaleFactor;
-                float filler = Math.Abs(w_c - scaledWidth) / 2;
+                // vertical image                
                 unscaled_p.X = (int)((p.X - filler) / scaleFactor);
                 unscaled_p.Y = (int)(p.Y / scaleFactor);
             }
@@ -83,8 +106,10 @@ namespace ImageCropper
 
         void UpdateCroppedPreview()
         {
-            
-            if(Image != null)
+
+
+
+            if (Image != null)
             {
 
                 Point topLeft = ToImageCoordinate(new Point(cropArea.X, cropArea.Y));
@@ -99,9 +124,9 @@ namespace ImageCropper
                 {
                     g.DrawImage(Image, new Rectangle(0, 0, width, height), new Rectangle(topLeft.X, topLeft.Y, width, height), GraphicsUnit.Pixel);
                 }
-
                 PreviewImageChanged?.Invoke(this, new PreviewImageChangedArgs(result));
-            }            
+
+            }
         }
 
 
@@ -109,6 +134,8 @@ namespace ImageCropper
         {
 
         }
+
+
         protected override void OnPaint(PaintEventArgs pe)
         {
             base.OnPaint(pe);
@@ -157,7 +184,7 @@ namespace ImageCropper
                 int dx = e.X - orgX;
                 int dy = e.Y - orgY;
 
-                cropArea.DragResize(currentDragger, dx, dy);
+                cropArea.DragResize(currentDragger, dx, dy, e.X, e.Y);
                 UpdateCroppedPreview();
 
                 orgX = e.X; orgY = e.Y;
@@ -198,15 +225,16 @@ namespace ImageCropper
                 }
             }
             Invalidate();
-            
+
         }
 
-        
+
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
-            if(isDragging || currentDragger != null) { 
+            if (isDragging || currentDragger != null)
+            {
                 isDragging = false;
                 currentDragger = null;
                 UpdateCroppedPreview();
@@ -339,6 +367,12 @@ namespace ImageCropper
             Hover = false;
             aspectRatio = ratio;
 
+            if (ratio > 0)
+            {
+                Width = GetWidth();
+                //Height = GetHeight();
+            }
+
             // assign draggers
             draggers.Add(new Dragger(this, DraggerLocation.TOP_LEFT));
             draggers.Add(new Dragger(this, DraggerLocation.TOP_RIGHT));
@@ -347,72 +381,225 @@ namespace ImageCropper
 
         }
 
+        int DirectionOfPoint(Point A, Point B, Point P)
+        {
+            // subtracting co-ordinates of point A from 
+            // B and P, to make A as origin 
+            B.X -= A.X;
+            B.Y -= A.Y;
+            P.X -= A.X;
+            P.Y -= A.Y;
+
+            // Determining cross Product 
+            int cross_product = B.X * P.Y - B.Y * P.X;
+
+            return cross_product;
+        }
+
         public bool IsMouseHovering(int mouseX, int mouseY)
         {
             return mouseX >= X && mouseX <= (X + Width) && mouseY >= Y && mouseY <= (Y + Width);
         }
 
-        public void DragResize(Dragger dragger, int dx, int dy)
+        private int GetHeight()
         {
-            switch (dragger.Location)
+            return Convert.ToInt32(Width * (1 / aspectRatio));
+        }
+
+        private int GetWidth()
+        {
+            return Convert.ToInt32(Height * aspectRatio);
+        }
+
+        public void DragResize(Dragger dragger, int dx, int dy, int mouseX, int mouseY)
+        {
+
+            if (aspectRatio < 0)
             {
-                case DraggerLocation.TOP_LEFT:
+                switch (dragger.Location)
+                {
+                    case DraggerLocation.TOP_LEFT:
 
-                    if ((Width - dx) >= MinimumWidth)
-                    {
-                        X += dx; // intent
-                        Width -= dx; // compensate
-                    }
+                        if ((Width - dx) >= MinimumWidth)
+                        {
+                            X += dx; // intent
+                            Width -= dx; // compensate
+                        }
 
-                    if ((Height - dy) >= MinimumHeight)
-                    {
-                        Y += dy; // intent
-                        Height -= dy; // compensate
-                    }
+                        if ((Height - dy) >= MinimumHeight)
+                        {
+                            Y += dy; // intent
+                            Height -= dy; // compensate
+                        }
 
-                    break;
-                case DraggerLocation.TOP_RIGHT:
+                        break;
+                    case DraggerLocation.TOP_RIGHT:
 
-                    if ((Width + dx) >= MinimumWidth)
-                    {
-                        Width += dx; // intent
-                    }
+                        if ((Width + dx) >= MinimumWidth)
+                        {
+                            Width += dx; // intent
+                        }
 
-                    if ((Height - dy) >= MinimumHeight)
-                    {
-                        Y += dy; // intent
-                        Height -= dy; // compensate
-                    }
-
-
-                    break;
-                case DraggerLocation.BOTTOM_LEFT:
-
-                    if ((Width - dx) >= MinimumWidth)
-                    {
-                        X += dx; // intent
-                        Width -= dx; // compensate
-                    }
-
-                    if ((Height + dy) >= MinimumHeight)
-                    {
-                        Height += dy; // intent
-                    }
+                        if ((Height - dy) >= MinimumHeight)
+                        {
+                            Y += dy; // intent
+                            Height -= dy; // compensate
+                        }
 
 
-                    break;
-                case DraggerLocation.BOTTOM_RIGHT:
+                        break;
+                    case DraggerLocation.BOTTOM_LEFT:
+
+                        if ((Width - dx) >= MinimumWidth)
+                        {
+                            X += dx; // intent
+                            Width -= dx; // compensate
+                        }
+
+                        if ((Height + dy) >= MinimumHeight)
+                        {
+                            Height += dy; // intent
+                        }
 
 
-                    if ((Width + dx) >= MinimumWidth)
-                    {
-                        Width += dx; // intent
-                    }
-                    if ((Height + dy) >= MinimumHeight)
-                    {
-                        Height += dy; // intent
-                    }
-                    break;
+                        break;
+                    case DraggerLocation.BOTTOM_RIGHT:
+
+
+                        if ((Width + dx) >= MinimumWidth)
+                        {
+                            Width += dx; // intent
+                        }
+                        if ((Height + dy) >= MinimumHeight)
+                        {
+                            Height += dy; // intent
+                        }
+                        break;
+                }
+            }
+            else
+            {
+
+                int diag = DirectionOfPoint(new Point(X, Y), new Point(X + Width, Y + Height), new Point(mouseX, mouseY));
+                int diagOppo = DirectionOfPoint(new Point(X, Y + Height), new Point(X + Width, Y), new Point(mouseX, mouseY));
+
+                // compensate
+                int compX;
+                int compY;
+
+                switch (dragger.Location)
+                {
+                    case DraggerLocation.TOP_LEFT:
+
+
+                        if (diag > 0)
+                        {
+
+                            if ((Width - dx) >= MinimumWidth)
+                            {
+                                X += dx; // intent
+                                Width -= dx; // compensate
+                            }
+
+                            compY = GetHeight() - Height;
+                            Height = GetHeight();
+                            Y -= compY;
+                        }
+                        else
+                        {
+
+                            if ((Height - dy) >= MinimumHeight)
+                            {
+                                Y += dy; // intent
+                                Height -= dy; // compensate
+                            }
+
+                            compX = GetWidth() - Width;
+                            Width = GetWidth();
+                            X -= compX;
+
+                        }
+
+
+
+                        break;
+                    case DraggerLocation.TOP_RIGHT:
+
+                        if (diagOppo > 0)
+                        {
+
+                            if ((Width + dx) >= MinimumWidth)
+                            {
+                                Width += dx; // intent
+                            }
+
+                            compY = GetHeight() - Height;
+                            Height = GetHeight();
+                            Y -= compY;
+                        }
+                        else
+                        {
+                            if ((Height - dy) >= MinimumHeight)
+                            {
+                                Y += dy; // intent
+                                Height -= dy; // compensate
+                            }
+
+                            Width = GetWidth();
+                        }
+
+                        break;
+                    case DraggerLocation.BOTTOM_LEFT:
+
+                        if (diagOppo < 0)
+                        {
+
+
+                            if ((Width - dx) >= MinimumWidth)
+                            {
+                                X += dx; // intent
+                                Width -= dx; // compensate
+                            }
+
+                            Height = GetHeight();
+                        }
+                        else
+                        {
+                            if ((Height + dy) >= MinimumHeight)
+                            {
+                                Height += dy; // intent
+                            }
+                            compX = GetWidth() - Width;
+                            Width = GetWidth();
+                            X -= compX;
+                        }
+
+                        break;
+                    case DraggerLocation.BOTTOM_RIGHT:
+
+                        if (diag < 0)
+                        {
+                            if ((Width + dx) >= MinimumWidth)
+                            {
+                                Width += dx; // intent
+                            }
+
+                            Height = GetHeight();
+                        }
+                        else
+                        {
+                            if ((Height + dy) >= MinimumHeight)
+                            {
+                                Height += dy; // intent
+                            }
+
+                            Width = GetWidth();
+                        }
+
+
+
+                        break;
+                }
             }
         }
 
